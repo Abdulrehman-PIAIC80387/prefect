@@ -160,6 +160,72 @@ class TestWorkerRetrySettings:
             KubernetesWorkerCreateJobRetrySettings(delay_seconds=-1)
 
 
+class TestSecretEnvVarsSettings:
+    def test_default_is_empty_dict(self):
+        settings = KubernetesSettings()
+        assert settings.worker.secret_env_vars == {}
+
+    @pytest.mark.parametrize(
+        "env_var_value",
+        [
+            "PREFECT_CLIENT_CUSTOM_HEADERS:my-secret:headers-key",
+            json.dumps(
+                {
+                    "PREFECT_CLIENT_CUSTOM_HEADERS": {
+                        "name": "my-secret",
+                        "key": "headers-key",
+                    }
+                }
+            ),
+        ],
+    )
+    def test_single_entry(self, monkeypatch: pytest.MonkeyPatch, env_var_value: str):
+        monkeypatch.setenv(
+            "PREFECT_INTEGRATIONS_KUBERNETES_WORKER_SECRET_ENV_VARS",
+            env_var_value,
+        )
+        settings = KubernetesSettings()
+        assert settings.worker.secret_env_vars == {
+            "PREFECT_CLIENT_CUSTOM_HEADERS": {
+                "name": "my-secret",
+                "key": "headers-key",
+            }
+        }
+
+    @pytest.mark.parametrize(
+        "env_var_value",
+        [
+            "VAR_A:secret-a:key-a,VAR_B:secret-b:key-b",
+            json.dumps(
+                {
+                    "VAR_A": {"name": "secret-a", "key": "key-a"},
+                    "VAR_B": {"name": "secret-b", "key": "key-b"},
+                }
+            ),
+        ],
+    )
+    def test_multiple_entries(
+        self, monkeypatch: pytest.MonkeyPatch, env_var_value: str
+    ):
+        monkeypatch.setenv(
+            "PREFECT_INTEGRATIONS_KUBERNETES_WORKER_SECRET_ENV_VARS",
+            env_var_value,
+        )
+        settings = KubernetesSettings()
+        assert settings.worker.secret_env_vars == {
+            "VAR_A": {"name": "secret-a", "key": "key-a"},
+            "VAR_B": {"name": "secret-b", "key": "key-b"},
+        }
+
+    def test_invalid_compact_format_raises(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv(
+            "PREFECT_INTEGRATIONS_KUBERNETES_WORKER_SECRET_ENV_VARS",
+            "MISSING_KEY:only-secret",
+        )
+        with pytest.raises(Exception):
+            KubernetesSettings()
+
+
 class TestObserverSettings:
     @pytest.mark.parametrize(
         "env_var_value",

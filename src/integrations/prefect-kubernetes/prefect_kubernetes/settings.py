@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import partial
 from typing import Annotated, Optional, Union
 
@@ -7,6 +8,51 @@ from pydantic import AliasChoices, AliasPath, BeforeValidator, Field
 
 from prefect.settings.base import PrefectBaseSettings, build_settings_config
 from prefect.types import validate_set_T_from_delim_string
+
+
+def _validate_secret_env_vars(
+    value: dict[str, dict[str, str]] | str | None,
+) -> dict[str, dict[str, str]]:
+    """Validate and parse secret env var mappings.
+
+    Accepts:
+      - None → empty dict
+      - dict already in the correct shape
+      - JSON string: '{"ENV_VAR": {"name": "secret-name", "key": "secret-key"}}'
+      - Compact string: 'ENV_VAR:secret-name:secret-key,ENV_VAR2:secret-name2:secret-key2'
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    # Try JSON first
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Fall back to compact colon-delimited format
+    result: dict[str, dict[str, str]] = {}
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = entry.split(":")
+        if len(parts) != 3:
+            raise ValueError(
+                f"Invalid secret_env_vars entry '{entry}': expected format "
+                "'ENV_VAR_NAME:secret-name:secret-key'"
+            )
+        env_var, secret_name, secret_key = (p.strip() for p in parts)
+        result[env_var] = {"name": secret_name, "key": secret_key}
+    return result
+
+
+SecretEnvVars = Annotated[
+    Union[dict[str, dict[str, str]], str, None],
+    BeforeValidator(_validate_secret_env_vars),
+]
 
 
 def _validate_label_filters(value: dict[str, str] | str | None) -> dict[str, str]:
@@ -129,6 +175,17 @@ class KubernetesWorkerSettings(PrefectBaseSettings):
     api_auth_string_secret_key: Optional[str] = Field(
         default=None,
         description="The key of the secret the worker's API auth string is stored in.",
+    )
+
+    secret_env_vars: SecretEnvVars = Field(
+        default_factory=dict,
+        description=(
+            "A mapping of environment variable names to Kubernetes secret references. "
+            "Each entry replaces the plaintext env var in the Job manifest with a "
+            "valueFrom.secretKeyRef. Accepts a JSON object "
+            '(\'{"ENV_VAR": {"name": "secret-name", "key": "secret-key"}}\') '
+            "or a compact string ('ENV_VAR:secret-name:secret-key,...')."
+        ),
     )
 
     create_secret_for_api_key: bool = Field(

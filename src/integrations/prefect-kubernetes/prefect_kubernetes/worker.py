@@ -1094,6 +1094,14 @@ class KubernetesWorker(
                     "and `PREFECT_INTEGRATIONS_KUBERNETES_WORKER_API_AUTH_STRING_SECRET_KEY` environment variables."
                 )
 
+        for env_var_name, secret_ref in settings.worker.secret_env_vars.items():
+            await self._replace_env_variable_with_secret(
+                env_variable_name=env_var_name,
+                configuration=configuration,
+                secret_name=secret_ref["name"],
+                secret_key=secret_ref["key"],
+            )
+
         try:
             batch_client = BatchV1Api(client)
             retry_settings = settings.worker.create_job_retry

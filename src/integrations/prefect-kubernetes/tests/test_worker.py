@@ -2208,6 +2208,105 @@ class TestKubernetesWorker:
                 in caplog.text
             )
 
+    async def test_secret_env_vars_replaces_env_with_secret_ref(
+        self,
+        flow_run,
+        mock_core_client,
+        mock_watch,
+        mock_pods_stream_that_returns_running_pod,
+        mock_batch_client,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv(
+            "PREFECT_INTEGRATIONS_KUBERNETES_WORKER_SECRET_ENV_VARS",
+            "PREFECT_CLIENT_CUSTOM_HEADERS:my-headers-secret:headers-key",
+        )
+        mock_watch.return_value.stream = mock_pods_stream_that_returns_running_pod
+
+        configuration = await KubernetesWorkerJobConfiguration.from_template_and_values(
+            KubernetesWorker.get_default_base_job_template(), {"image": "foo"}
+        )
+        with temporary_settings(
+            updates={PREFECT_API_KEY: "fake"},
+        ):
+            configuration.prepare_for_flow_run(flow_run=flow_run)
+            # Inject a plaintext env var that should be replaced
+            manifest_env = configuration.job_manifest["spec"]["template"]["spec"][
+                "containers"
+            ][0]["env"]
+            manifest_env.append(
+                {"name": "PREFECT_CLIENT_CUSTOM_HEADERS", "value": "sensitive-value"}
+            )
+
+            async with KubernetesWorker(work_pool_name="test") as k8s_worker:
+                await k8s_worker.run(flow_run, configuration)
+
+        mock_batch_client.return_value.create_namespaced_job.assert_called_once()
+        env = mock_batch_client.return_value.create_namespaced_job.call_args[0][1][
+            "spec"
+        ]["template"]["spec"]["containers"][0]["env"]
+        assert {
+            "name": "PREFECT_CLIENT_CUSTOM_HEADERS",
+            "valueFrom": {
+                "secretKeyRef": {"name": "my-headers-secret", "key": "headers-key"}
+            },
+        } in env
+        # Ensure the plaintext value is gone
+        assert not any(
+            entry
+            for entry in env
+            if entry.get("name") == "PREFECT_CLIENT_CUSTOM_HEADERS" and "value" in entry
+        )
+
+    async def test_secret_env_vars_multiple_entries(
+        self,
+        flow_run,
+        mock_core_client,
+        mock_watch,
+        mock_pods_stream_that_returns_running_pod,
+        mock_batch_client,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv(
+            "PREFECT_INTEGRATIONS_KUBERNETES_WORKER_SECRET_ENV_VARS",
+            json.dumps(
+                {
+                    "VAR_A": {"name": "secret-a", "key": "key-a"},
+                    "VAR_B": {"name": "secret-b", "key": "key-b"},
+                }
+            ),
+        )
+        mock_watch.return_value.stream = mock_pods_stream_that_returns_running_pod
+
+        configuration = await KubernetesWorkerJobConfiguration.from_template_and_values(
+            KubernetesWorker.get_default_base_job_template(), {"image": "foo"}
+        )
+        configuration.prepare_for_flow_run(flow_run=flow_run)
+        manifest_env = configuration.job_manifest["spec"]["template"]["spec"][
+            "containers"
+        ][0]["env"]
+        manifest_env.extend(
+            [
+                {"name": "VAR_A", "value": "plain-a"},
+                {"name": "VAR_B", "value": "plain-b"},
+            ]
+        )
+
+        async with KubernetesWorker(work_pool_name="test") as k8s_worker:
+            await k8s_worker.run(flow_run, configuration)
+
+        env = mock_batch_client.return_value.create_namespaced_job.call_args[0][1][
+            "spec"
+        ]["template"]["spec"]["containers"][0]["env"]
+        assert {
+            "name": "VAR_A",
+            "valueFrom": {"secretKeyRef": {"name": "secret-a", "key": "key-a"}},
+        } in env
+        assert {
+            "name": "VAR_B",
+            "valueFrom": {"secretKeyRef": {"name": "secret-b", "key": "key-b"}},
+        } in env
+
     async def test_create_job_failure(
         self,
         flow_run,
