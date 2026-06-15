@@ -225,6 +225,25 @@ class TestSecretEnvVarsSettings:
         with pytest.raises(Exception):
             KubernetesSettings()
 
+    @pytest.mark.parametrize(
+        "env_var_value",
+        [
+            "MY_VAR:my-secret:",
+            "MY_VAR::my-key",
+            json.dumps({"MY_VAR": {"name": "", "key": "my-key"}}),
+            json.dumps({"MY_VAR": {"name": "my-secret", "key": ""}}),
+        ],
+    )
+    def test_empty_name_or_key_raises(
+        self, monkeypatch: pytest.MonkeyPatch, env_var_value: str
+    ):
+        monkeypatch.setenv(
+            "PREFECT_INTEGRATIONS_KUBERNETES_WORKER_SECRET_ENV_VARS",
+            env_var_value,
+        )
+        with pytest.raises(Exception):
+            KubernetesSettings()
+
 
 class TestObserverSettings:
     @pytest.mark.parametrize(

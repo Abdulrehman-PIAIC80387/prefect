@@ -24,11 +24,13 @@ def _validate_secret_env_vars(
     if value is None:
         return {}
     if isinstance(value, dict):
+        _check_secret_env_vars_not_empty(value)
         return value
     # Try JSON first
     try:
         parsed = json.loads(value)
         if isinstance(parsed, dict):
+            _check_secret_env_vars_not_empty(parsed)
             return parsed
     except (json.JSONDecodeError, TypeError):
         pass
@@ -45,8 +47,26 @@ def _validate_secret_env_vars(
                 "'ENV_VAR_NAME:secret-name:secret-key'"
             )
         env_var, secret_name, secret_key = (p.strip() for p in parts)
+        if not env_var or not secret_name or not secret_key:
+            raise ValueError(
+                f"Invalid secret_env_vars entry '{entry}': env var name, "
+                "secret name, and secret key must all be non-empty"
+            )
         result[env_var] = {"name": secret_name, "key": secret_key}
     return result
+
+
+def _check_secret_env_vars_not_empty(
+    mapping: dict[str, dict[str, str]],
+) -> None:
+    for env_var, ref in mapping.items():
+        name = ref.get("name", "")
+        key = ref.get("key", "")
+        if not env_var or not name or not key:
+            raise ValueError(
+                f"Invalid secret_env_vars entry for '{env_var}': "
+                "env var name, secret name, and secret key must all be non-empty"
+            )
 
 
 SecretEnvVars = Annotated[
